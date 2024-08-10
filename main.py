@@ -2,6 +2,7 @@ from pyscript import display, document
 import folium
 import json
 import pandas as pd
+from ast import literal_eval
 
 from pyodide.http import open_url, pyfetch
 
@@ -75,16 +76,38 @@ async def submit_bounding_box(event):
     # english = input_text.value
     input_text = document.querySelector("#bounding_box")
     output_div = document.querySelector("#output")
+    map_element = document.querySelector("#folium")
+    print(map_element)
 
     tile = await get_elevation_tile(0, 0, 0)
     print(tile)
     output_div.innerText = input_text.value
 
+    # bounding_box.bounds = [[37.77, -102.42], [45.78, -110.41]]
+    # print(map_element)  # .get_root().removeChild(map_element)
+    # lat_min, lon_min, lat_max, lon_max = [
+    #    literal_eval(i) for i in input_text.value.split(",")
+    # ]
 
-bounds = [[37.77, -122.42], [45.78, -100.41]]
+    folium.Rectangle(
+        bounds=[[37.77, -122.42], [45.78, -100.41]],
+        color="blue",
+        fill=True,
+        fill_color="blue",
+        fill_opacity=0.2,
+    ).add_to(m)
+
+
+"""
 
 # Add the rectangle to the map
-folium.Rectangle(bounds=bounds, color="blue", fill=True, fill_color="cyan").add_to(m)
+bounding_box = folium.Rectangle(
+    bounds=[[37.77, -122.42], [45.78, -100.41]],
+    color="blue",
+    fill=True,
+    fill_color="cyan",
+).add_to(m)
 
+"""
 
 display(m, target="folium")
