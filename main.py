@@ -2,6 +2,7 @@ from pyscript import display, document
 import folium
 import json
 import pandas as pd
+import io
 from ast import literal_eval
 
 from pyodide.http import open_url, pyfetch
@@ -13,6 +14,8 @@ import numpy as np
 import asyncio
 import trimesh
 
+import zipfile
+
 """
 url = (
     "https://raw.githubusercontent.com/python-visualization/folium/master/examples/data"
@@ -23,10 +26,50 @@ state_data = pd.read_csv(open_url(state_unemployment))
 geo_json = json.loads(open_url(state_geo).read())
 """
 
-from js import Uint8Array, File, URL
+from js import File, URL, Blob, Uint8Array
 
 
 m = folium.Map(location=[48, -102], zoom_start=3, tiles="CartoDB positron")
+
+
+async def fetch_and_load_texture(x, y, zoom_level):
+    headers = {
+        "cache-control": "max-age=0",
+        "sec-ch-ua": '" Not A;Brand";v="99", "Chromium";v="99", "Google Chrome";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "none",
+        "sec-fetch-user": "?1",
+        "upgrade-insecure-requests": "1",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.82 Safari/537.36",
+    }
+    url_tex = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}".format(
+        z=zoom_level, y=y, x=x
+    )
+    # url_tex = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    # url_tex = "http://cawm.lib.uiowa.edu/tiles/{z}/{x}/{y}.png"
+    # url_tex = "http://server.arcgisonline.com/ArcGIS/rest/services/NatGeo_World_Map/MapServer/tile//{z}/{y}/{x}"
+    # url_tex = "http://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"
+    # url_tex = "http://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}"
+    response = await pyfetch(url_tex, method="GET", headers=headers)
+
+    image_data = await response.bytes()
+
+    image_stream = BytesIO(image_data)
+
+    image = Image.open(image_stream)
+
+    # print(image)
+
+    return np.array(image)[:, :, [2, 1, 0]]  # .swapaxes(0,1)
+
+
+async def download_texture_tile(x, y, z):
+    tile_tex = await fetch_and_load_texture(x, y, z)
+
+    return (x, y, tile_tex)
 
 
 async def fetch_and_load_image(url):
@@ -43,7 +86,7 @@ async def fetch_and_load_image(url):
     image = Image.open(image_stream)
 
     # Now you can work with the image object
-    return np.array(image, dtype=np.float64)
+    return image
 
 
 async def download_elevation_tile(url):
@@ -56,6 +99,8 @@ async def download_elevation_tile(url):
     # tile = np.array(Image.open(BytesIO(response.content)), dtype=np.float64)
 
     tile = await fetch_and_load_image(url)
+
+    tile = np.array(tile, dtype=np.float64)
 
     # asyncio.gather(fetch_and_load_image(url) ) #up_down(), up_down(), up_down())
     # tile = np.array(Image.open(response), dtype=np.float64)
@@ -148,8 +193,44 @@ def heightmap_to_mesh(heightmap, dx=1.0, dy=1.0):
     faces = np.array(faces)
 
     # Create the mesh
+
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-    return mesh
+
+    # mesh.visual = trimesh.visual.TextureVisuals(
+    ##    uv=np.array([xs, ys]).reshape(2, -1).T,
+    #    image=np.random.randint(0, 255, (3, n_rows, n_cols)),
+    # )
+
+    # Create UV coordinates - they should be normalized to [0, 1] range
+    uv_x = np.linspace(0, 1, n_cols)
+    uv_y = np.linspace(0, 1, n_rows)
+    uv_xv, uv_yv = np.meshgrid(uv_x, uv_y)
+    uv_coords = np.column_stack((uv_xv.flatten(), uv_yv.flatten()))
+
+    # Generate a random RGB texture image
+    texture_image = Image.fromarray(
+        np.random.randint(230, 255, (n_rows, n_cols, 3), dtype=np.uint8)
+    )
+
+    def get_texture(my_uvs, img):
+        # img is PIL Image
+        uvs = my_uvs
+        material = trimesh.visual.texture.SimpleMaterial(image=img)
+        texture = trimesh.visual.TextureVisuals(uv=uvs, image=img, material=material)
+        return texture
+
+    # texture_visual = get_texture(uv_coords, texture_image)
+
+    # mesh.visual = trimesh.visual.TextureVisuals(
+    #    uv=uv_coords, image=Image.fromarray(texture_image)
+    # )
+
+    # Assign texture to the mesh using TextureVisuals
+    # mesh.visual = texture_visual  # trimesh.visual.TextureVisuals(uv=uv_coords, image=texture_image)
+
+    # mesh.visual = trimesh.visual.TextureVisuals(uv=uv_coords, image=texture)
+
+    return mesh  # , texture_visual
 
 
 # Wrap the synchronous function in an async function
@@ -196,6 +277,9 @@ async def submit_bounding_box(event):
     print("y_range:", y_range)
 
     tasks = []
+
+    # tile_tex = await download_texture_tile(0, 0, 0)
+    # print(tile_tex)
 
     for i in x_range:
         for j in y_range:
@@ -266,18 +350,81 @@ async def submit_bounding_box(event):
         # mesh.visual = trimesh.visual.TextureVisuals(uv=uv_coords, image=full_image)
 
         # print(mesh)
-        file = File.new(
-            [mesh.export(file_type="obj")], "generated_area.obj", {type: "model/obj"}
-        )
-        url = URL.createObjectURL(file)
 
-        hidden_link = document.createElement("a")
-        hidden_link.setAttribute("download", "generated_area.obj")
-        hidden_link.setAttribute("href", url)
-        hidden_link.click()
+        if False:
 
-        # Save the mesh as a .obj file with the texture
-        # mesh.export("textured_mesh.obj")
+            file = File.new(
+                [mesh.export(file_type="obj")],
+                "generated_area.obj",
+                {type: "model/obj"},
+            )
+
+            url = URL.createObjectURL(file)
+
+            hidden_link = document.createElement("a")
+            hidden_link.setAttribute("download", "generated_area.obj")
+            hidden_link.setAttribute("href", url)
+            hidden_link.click()
+
+        if True:
+
+            obj_data = mesh.export(file_type="obj")
+            # mtl_data = mesh.visual.material.export(file_type="mtl")
+
+            mtl_data = f"""newmtl material_0
+            Ka 1.000 1.000 1.000
+            Kd 1.000 1.000 1.000
+            Ks 0.000 0.000 0.000
+            d 1.0
+            illum 2
+            map_Kd texture.png
+            """
+
+            # Generate a random RGB texture image
+            texture_pil = Image.fromarray(
+                np.random.randint(
+                    100,
+                    255,
+                    (full_image.shape[0], full_image.shape[1], 3),
+                    dtype=np.uint8,
+                )
+            )
+
+            # Save the texture image as PNG in memory
+            texture_buffer = io.BytesIO()
+            texture_pil.save(texture_buffer, format="PNG")
+            texture_buffer.seek(0)
+            texture_data = texture_buffer.getvalue()
+
+            # Create an in-memory ZIP file
+            zip_buffer = io.BytesIO()
+
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                # Add OBJ and MTL files to the ZIP
+                zip_file.writestr("model.obj", obj_data)
+                zip_file.writestr("model.png", texture_data)
+                zip_file.writestr("model.mtl", mtl_data)
+
+            # Prepare the ZIP file for download
+            zip_buffer.seek(0)
+
+            zip_bytes = zip_buffer.getvalue()
+
+            # Convert the bytes to a JavaScript Uint8Array
+            uint8_array = Uint8Array.new(list(zip_bytes))
+
+            # Create a Blob from the Uint8Array
+            zip_blob = Blob.new([uint8_array], {"type": "application/zip"})
+
+            zip_url = URL.createObjectURL(zip_blob)
+
+            # Triggering the download by creating a hidden link and clicking it
+            hidden_link = document.createElement("a")
+            hidden_link.setAttribute("download", "model_files.zip")
+            hidden_link.setAttribute("href", zip_url)
+            hidden_link.click()
+
+            # Convert buffer to bytes
 
 
 """
