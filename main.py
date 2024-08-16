@@ -53,7 +53,7 @@ async def fetch_and_load_texture(x, y, zoom_level):
     # url_tex = "http://server.arcgisonline.com/ArcGIS/rest/services/NatGeo_World_Map/MapServer/tile//{z}/{y}/{x}"
     # url_tex = "http://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"
     # url_tex = "http://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}"
-    response = await pyfetch(url_tex, method="GET", headers=headers)
+    response = await pyfetch(url_tex, method="GET")  # , headers=headers)
 
     image_data = await response.bytes()
 
@@ -276,31 +276,50 @@ async def submit_bounding_box(event):
     print("x_range:", x_range)
     print("y_range:", y_range)
 
-    tasks = []
+    tasks_elevation = []
+    tasks_texture = []
 
     # tile_tex = await download_texture_tile(0, 0, 0)
     # print(tile_tex)
 
     for i in x_range:
         for j in y_range:
-            tasks.append(get_elevation_tile(i, j, 11))
+            tasks_elevation.append(get_elevation_tile(i, j, 11))
+            tasks_texture.append(download_texture_tile(i, j, 11))
 
             # print(i, j, tile)
 
-    results = await asyncio.gather(*tasks)
+    results_elevation = await asyncio.gather(*tasks_elevation)
+    results_texture = await asyncio.gather(*tasks_texture)
 
-    full_image = np.zeros((256 * x_range.shape[0], 256 * y_range.shape[0]), dtype=float)
+    full_elevation_image = np.zeros(
+        (256 * x_range.shape[0], 256 * y_range.shape[0]), dtype=float
+    )
+
+    full_texture_image = np.zeros(
+        (256 * x_range.shape[0], 256 * y_range.shape[0], 3), dtype=np.uint8
+    )
 
     # parse results
-    for result in results:
+    for result in results_elevation:
         i, j, tile = result
 
-        full_image[
+        full_elevation_image[
             (i - x_range[0]) * 256 : (i - x_range[0] + 1) * 256,
             (j - y_range[0]) * 256 : (j - y_range[0] + 1) * 256,
         ] = np.array(tile).T
 
-    print(full_image)
+    for result in results_texture:
+        i, j, tile = result
+
+        full_texture_image[
+            (i - x_range[0]) * 256 : (i - x_range[0] + 1) * 256,
+            (j - y_range[0]) * 256 : (j - y_range[0] + 1) * 256,
+        ] = np.array(tile).swapaxes(0, 1)[
+            :, :, [2, 1, 0]
+        ]  # .T
+
+    # print(full_image)
 
     # print(results)
 
@@ -336,14 +355,14 @@ async def submit_bounding_box(event):
 
         # Create a Trimesh object
         # mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-        full_image -= np.min(full_image)
-        full_image *= full_image.max() ** -1
-        full_image *= full_image.shape[0] * 0.1
+        full_elevation_image -= np.min(full_elevation_image)
+        full_elevation_image *= full_elevation_image.max() ** -1
+        full_elevation_image *= full_elevation_image.shape[0] * 0.1
 
         # print(full_image.max(), full_image.min())
 
         mesh = heightmap_to_mesh(
-            full_image
+            full_elevation_image
         )  # np.random.uniform(-100, 100, full_image.shape))
 
         # Apply texture using visual.TextureVisuals
@@ -381,14 +400,15 @@ async def submit_bounding_box(event):
             """
 
             # Generate a random RGB texture image
-            texture_pil = Image.fromarray(
-                np.random.randint(
+            texture_pil = Image.fromarray(full_texture_image)
+
+            """    np.random.randint(
                     100,
                     255,
                     (full_image.shape[0], full_image.shape[1], 3),
                     dtype=np.uint8,
                 )
-            )
+            )"""
 
             # Save the texture image as PNG in memory
             texture_buffer = io.BytesIO()
