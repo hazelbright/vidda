@@ -170,6 +170,7 @@ def heightmap_to_mesh(heightmap, dx=1.0, dy=1.0):
         )
     )
 
+    """
     # Create faces
     faces = []
     for i in range(n_rows - 1):
@@ -191,6 +192,33 @@ def heightmap_to_mesh(heightmap, dx=1.0, dy=1.0):
             faces.append([idx_tl, idx_tr, idx_bl])
 
     faces = np.array(faces)
+    """
+
+    n_rows, n_cols = heightmap.shape
+
+    idx = np.arange(n_rows * n_cols).reshape((n_rows, n_cols))
+
+    # Compute the indices of the vertices that form the faces
+    idx_bl = idx[:-1, :-1].ravel()  # Bottom-left vertices
+    idx_br = idx[:-1, 1:].ravel()  # Bottom-right vertices
+    idx_tl = idx[1:, :-1].ravel()  # Top-left vertices
+    idx_tr = idx[1:, 1:].ravel()  # Top-right vertices
+
+    # Stack the indices to create faces
+    # First triangle: [idx_tr, idx_br, idx_bl]
+    faces_1 = np.stack([idx_tr, idx_br, idx_bl], axis=1)
+
+    # Second triangle: [idx_tl, idx_tr, idx_bl]
+    faces_2 = np.stack([idx_tl, idx_tr, idx_bl], axis=1)
+
+    # Combine both triangles
+    faces = np.vstack([faces_1, faces_2])
+
+    faces = np.concatenate(
+        [faces[: int(len(faces) / 2)], faces[int(len(faces) / 2) :]], axis=-1
+    ).reshape(-1, 3)
+
+    # faces
 
     # Create the mesh
 
@@ -292,6 +320,8 @@ async def submit_bounding_box(event):
     results_elevation = await asyncio.gather(*tasks_elevation)
     results_texture = await asyncio.gather(*tasks_texture)
 
+    print("Data downloaded")
+
     full_elevation_image = np.zeros(
         (256 * x_range.shape[0], 256 * y_range.shape[0]), dtype=float
     )
@@ -318,6 +348,8 @@ async def submit_bounding_box(event):
         ] = np.array(tile).swapaxes(0, 1)[
             :, :, [2, 1, 0]
         ]  # .T
+
+    print("Data combined")
 
     # print(full_image)
 
@@ -365,6 +397,8 @@ async def submit_bounding_box(event):
             full_elevation_image
         )  # np.random.uniform(-100, 100, full_image.shape))
 
+        print("Mesh computed")
+
         # Apply texture using visual.TextureVisuals
         # mesh.visual = trimesh.visual.TextureVisuals(uv=uv_coords, image=full_image)
 
@@ -387,20 +421,45 @@ async def submit_bounding_box(event):
 
         if True:
 
+            # Generate a random RGB texture image
+            texture_pil = Image.fromarray(full_texture_image[::-1])
+
+            uv_coordinates = mesh.vertices[
+                :, [0, 2]
+            ]  # Use x and y components of vertices for UV
+
+            uv_min = uv_coordinates.min(axis=0)
+            uv_max = uv_coordinates.max(axis=0)
+            uv = (uv_coordinates - uv_min) / (uv_max - uv_min)
+            # im = Image.open("image.png")
+            material = trimesh.visual.texture.SimpleMaterial(
+                image=texture_pil, glossiness=None
+            )
+
+            # material = trimesh.visual.texture.PBRMaterial(image=texture_pil)
+
+            # mesh = mesh.simplify_quadric_decimation(face_count=1000)
+
+            # print("simplified mesh")
+
+            color_visuals = trimesh.visual.TextureVisuals(uv=uv, material=material)
+            mesh.visual = color_visuals
+
+            print("Mesh constructed")
+
             obj_data = mesh.export(file_type="obj")
             # mtl_data = mesh.visual.material.export(file_type="mtl")
 
-            mtl_data = f"""newmtl material_0
-            Ka 1.000 1.000 1.000
-            Kd 1.000 1.000 1.000
-            Ks 0.000 0.000 0.000
-            d 1.0
-            illum 2
-            map_Kd texture.png
-            """
+            print("Obj exported")
 
-            # Generate a random RGB texture image
-            texture_pil = Image.fromarray(full_texture_image)
+            mtl_data = f"""newmtl material_0
+Ka 0.00000000 0.00000000 0.00000000
+Kd 0.00000000 0.00000000 0.00000000
+Ks 0.00000000 0.00000000 0.00000000
+Ns 0.00000000
+map_Kd material_0.png
+            """
+            # mtl_data = mesh.visual.material.to_mtl()
 
             """    np.random.randint(
                     100,
@@ -422,8 +481,10 @@ async def submit_bounding_box(event):
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
                 # Add OBJ and MTL files to the ZIP
                 zip_file.writestr("model.obj", obj_data)
-                zip_file.writestr("model.png", texture_data)
+                zip_file.writestr("material_0.png", texture_data)
                 zip_file.writestr("model.mtl", mtl_data)
+
+            print("Zipfile created")
 
             # Prepare the ZIP file for download
             zip_buffer.seek(0)
