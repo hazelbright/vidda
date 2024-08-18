@@ -284,20 +284,31 @@ async def download_data(indices):
 
 async def submit_bounding_box(event):
     # input_text = document.querySelector("#english")
+
     # english = input_text.value
     input_text = document.querySelector("#bounding_box")
-    output_div = document.querySelector("#output")
+    # output_div = document.querySelector("#output")
+
+    sw_input = document.querySelector(".sw")
+    ne_input = document.querySelector(".ne")
+
+    print(sw_input.value, ne_input.value)
+    sw0, sw1 = [literal_eval(i) for i in sw_input.value.split(",")]
+    ne0, ne1 = [literal_eval(i) for i in ne_input.value.split(",")]
+
+    bounding_box = [ne0, ne1, sw0, sw1]
+
     # map_element = document.querySelector("#folium")
     # print(map_element)
 
     # if False:
 
-    output_div.innerText = input_text.value
+    # output_div.innerText = input_text.value
 
     # bounding_box.bounds = [[37.77, -102.42], [45.78, -110.41]]
     # print(map_element)  # .get_root().removeChild(map_element)
 
-    bounding_box = [literal_eval(i) for i in input_text.value.split(",")]
+    # bounding_box = [literal_eval(i) for i in input_text.value.split(",")]
 
     x_range, y_range = get_ranges(bounding_box, 11)
     print("x_range:", x_range)
@@ -319,6 +330,7 @@ async def submit_bounding_box(event):
     results_elevation = await asyncio.gather(*tasks_elevation)
 
     print("Data downloaded")
+    update_progress(10)
 
     full_elevation_image = np.zeros(
         (256 * x_range.shape[0], 256 * y_range.shape[0]), dtype=float
@@ -335,6 +347,8 @@ async def submit_bounding_box(event):
 
     del results_elevation
     gc.collect()
+
+    update_progress(20)
 
     results_texture = await asyncio.gather(*tasks_texture)
 
@@ -356,6 +370,7 @@ async def submit_bounding_box(event):
     gc.collect()
 
     print("Data combined")
+    update_progress(40)
 
     # print(full_image)
 
@@ -407,6 +422,7 @@ async def submit_bounding_box(event):
         mesh = heightmap_to_mesh(
             full_elevation_image
         )  # np.random.uniform(-100, 100, full_image.shape))
+        update_progress(60)
 
         del full_elevation_image
         gc.collect()
@@ -455,6 +471,8 @@ async def submit_bounding_box(event):
 
             del texture_pil
             gc.collect()
+
+            update_progress(80)
 
             # material = trimesh.visual.texture.PBRMaterial(image=texture_pil)
 
@@ -538,6 +556,8 @@ async def submit_bounding_box(event):
                 del mesh
                 gc.collect()
 
+                update_progress(100)
+
                 url = URL.createObjectURL(file)
 
                 hidden_link = document.createElement("a")
@@ -546,6 +566,11 @@ async def submit_bounding_box(event):
                 hidden_link.click()
 
             # Convert buffer to bytes
+
+
+def update_progress(value):
+    progress_bar = document.getElementById("progress-bar")
+    progress_bar.value = value
 
 
 """
@@ -560,7 +585,11 @@ bounding_box = folium.Rectangle(
 
 """
 
-display(m, target="folium")
+# ls = folium.PolyLine(
+#    locations=[[43, 7], [43, 13], [47, 13], [47, 7], [43, 7]], color="red"
+# )
+# ls.add_to(m)
+# display(m, target="folium")
 
 # 40,-74.5, 40.3, -74.2
 # 37,-75.5,38,-74.9

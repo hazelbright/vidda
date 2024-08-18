@@ -1,21 +1,14 @@
-<!doctype html>
-
+<!DOCTYPE html>
 <html>
 
 <head>
-    <!-- Recommended meta tags -->
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1.0">
-
-    <!-- PyScript CSS -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="assets/css/vidda.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.0.2/dist/leaflet.css" />
+    <link rel="stylesheet" href="./src/leaflet-areaselect.css" />
     <link rel="stylesheet" href="https://pyscript.net/releases/2024.1.1/core.css">
-    <!-- CSS for examples -->
-    <link rel="stylesheet" href="./assets/css/examples.css" />
 
-    <!-- This script tag bootstraps PyScript -->
     <script type="module" src="https://pyscript.net/releases/2024.1.1/core.js"></script>
-
-    <!-- for splashscreen -->
     <style>
         #loading {
             outline: none;
@@ -29,32 +22,88 @@
         loading.showModal();
     </script>
 
-    <title>VIDDA v.0</title>
+    <title>VIDDA</title>
     <link rel="icon" type="image/png" href="./assets/favicon.png" />
+
 </head>
 
 <body>
+
     <dialog id="loading">
-        <h1>Loading...</h1>
+        <h1>Loading</h1>
     </dialog>
+
 
     <nav class="navbar" style="background-color: #ffffff">
         <div class="app-header">
             <a href="/">
                 <img src="./assets/logo.png" class="logo" />
             </a>
-            <a class="title" href="" style="color: #000000">v.0</a>
+            <a class="title" href="" style="color: #000000"></a>
         </div>
     </nav>
+    <progress id="progress-bar" value="0" max="100" style="width: 100%;"></progress>
+
+    <div id="map"></div>
+    <div id="result">
+        <div class="left">
+            South west:<br>
+            <input type="text" class="sw"><br>
+
+            North east:<br>
+            <input type="text" class="ne">
+
+            <button id="remove">Remove</button>
+            <button py-click="submit_bounding_box">Submit</button>
+
+        </div>
+        <div class="right">
+            INFOBOX
+
+        </div>
+    </div>
+
+
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.1/jquery.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script src="./src/leaflet-areaselect.js"></script>
+    <script>
+        // initialize map
+        var map = L.map('map').setView([38, 0], 2);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: 'abcd',
+            maxZoom: 20
+        }).addTo(map);
+
+        var areaSelect = L.areaSelect({
+            width: 200,
+            height: 250,
+            //keepAspectRatio:true,
+            //minHorizontalSpacing: 80,
+            //minVerticalSpacing: 80,
+        });
+        areaSelect.on("change", function () {
+            var bounds = this.getBounds();
+            $("#result .sw").val(bounds.getSouthWest().lat + ", " + bounds.getSouthWest().lng);
+            $("#result .ne").val(bounds.getNorthEast().lat + ", " + bounds.getNorthEast().lng);
+        });
+        areaSelect.addTo(map);
+
+        // $("#remove").click(function () {
+        //    areaSelect.remove();
+        // });
+
+        $("#setDimensions").click(function () {
+            areaSelect.setDimensions({ width: $('.width').val(), height: $('.height').val() })
+        })
+    </script>
 
     <section class="pyscript">
-        <div id="folium"></div>
         <script type="py" src="./main.py" config="./pyscript.toml"></script>
     </section>
-    <input type="text" id="bounding_box" placeholder="40,-74.5, 40.3, -74.2" />
-    <button py-click="submit_bounding_box">Submit</button>
-    <div id="output"></div>
+
+
 
 </body>
-
-</html>
