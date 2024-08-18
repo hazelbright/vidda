@@ -373,9 +373,9 @@ async def submit_bounding_box(event):
         ).add_to(m)
 
     if True:  # generate mesh
-        vertices = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]])
-        faces = np.array([[0, 1, 2], [0, 2, 3]])
-        uv_coords = np.array([[0, 0], [1, 0], [1, 1], [0, 1]])  # Texture coordinates
+        # vertices = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]])
+        # faces = np.array([[0, 1, 2], [0, 2, 3]])
+        # uv_coords = np.array([[0, 0], [1, 0], [1, 1], [0, 1]])  # Texture coordinates
 
         # Load the texture image (your image array should be in RGB format)
         # texture_image = Image.open('your_image.png')
@@ -387,9 +387,14 @@ async def submit_bounding_box(event):
 
         # Create a Trimesh object
         # mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-        full_elevation_image -= np.min(full_elevation_image)
-        full_elevation_image *= full_elevation_image.max() ** -1
-        full_elevation_image *= full_elevation_image.shape[0] * 0.1
+        print(
+            "elevation range:",
+            np.max(full_elevation_image),
+            np.min(full_elevation_image),
+        )
+        # full_elevation_image -= np.min(full_elevation_image)
+        # full_elevation_image *= full_elevation_image.max() ** -1
+        full_elevation_image *= full_elevation_image.shape[0] * 0.001
 
         # print(full_image.max(), full_image.min())
 
@@ -447,63 +452,80 @@ async def submit_bounding_box(event):
 
             print("Mesh constructed")
 
-            obj_data = mesh.export(file_type="obj")
-            # mtl_data = mesh.visual.material.export(file_type="mtl")
+            if False:
 
-            print("Obj exported")
+                obj_data = mesh.export(file_type="obj")
+                # mtl_data = mesh.visual.material.export(file_type="mtl")
 
-            mtl_data = f"""newmtl material_0
-Ka 0.00000000 0.00000000 0.00000000
-Kd 0.00000000 0.00000000 0.00000000
-Ks 0.00000000 0.00000000 0.00000000
-Ns 0.00000000
-map_Kd material_0.png
-            """
-            # mtl_data = mesh.visual.material.to_mtl()
+                print("Obj exported")
 
-            """    np.random.randint(
-                    100,
-                    255,
-                    (full_image.shape[0], full_image.shape[1], 3),
-                    dtype=np.uint8,
+                mtl_data = f"""newmtl material_0
+    Ka 0.00000000 0.00000000 0.00000000
+    Kd 0.00000000 0.00000000 0.00000000
+    Ks 0.00000000 0.00000000 0.00000000
+    Ns 0.00000000
+    map_Kd material_0.png
+                """
+                # mtl_data = mesh.visual.material.to_mtl()
+
+                """    np.random.randint(
+                        100,
+                        255,
+                        (full_image.shape[0], full_image.shape[1], 3),
+                        dtype=np.uint8,
+                    )
+                )"""
+
+                # Save the texture image as PNG in memory
+                texture_buffer = io.BytesIO()
+                texture_pil.save(texture_buffer, format="PNG")
+                texture_buffer.seek(0)
+                texture_data = texture_buffer.getvalue()
+
+                # Create an in-memory ZIP file
+                zip_buffer = io.BytesIO()
+
+                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                    # Add OBJ and MTL files to the ZIP
+                    zip_file.writestr("model.obj", obj_data)
+                    zip_file.writestr("material_0.png", texture_data)
+                    zip_file.writestr("model.mtl", mtl_data)
+
+                print("Zipfile created")
+
+                # Prepare the ZIP file for download
+                zip_buffer.seek(0)
+
+                zip_bytes = zip_buffer.getvalue()
+
+                # Convert the bytes to a JavaScript Uint8Array
+                uint8_array = Uint8Array.new(list(zip_bytes))
+
+                # Create a Blob from the Uint8Array
+                zip_blob = Blob.new([uint8_array], {"type": "application/zip"})
+
+                zip_url = URL.createObjectURL(zip_blob)
+
+                # Triggering the download by creating a hidden link and clicking it
+                hidden_link = document.createElement("a")
+                hidden_link.setAttribute("download", "model_files.zip")
+                hidden_link.setAttribute("href", zip_url)
+                hidden_link.click()
+            if True:
+                glb_data = mesh.export(file_type="glb")
+                print("Generated binary data for download ")
+                file = File.new(
+                    [Uint8Array.new(glb_data)],
+                    "generated_area.glb",
+                    {type: "model/gltf-binary"},
                 )
-            )"""
 
-            # Save the texture image as PNG in memory
-            texture_buffer = io.BytesIO()
-            texture_pil.save(texture_buffer, format="PNG")
-            texture_buffer.seek(0)
-            texture_data = texture_buffer.getvalue()
+                url = URL.createObjectURL(file)
 
-            # Create an in-memory ZIP file
-            zip_buffer = io.BytesIO()
-
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                # Add OBJ and MTL files to the ZIP
-                zip_file.writestr("model.obj", obj_data)
-                zip_file.writestr("material_0.png", texture_data)
-                zip_file.writestr("model.mtl", mtl_data)
-
-            print("Zipfile created")
-
-            # Prepare the ZIP file for download
-            zip_buffer.seek(0)
-
-            zip_bytes = zip_buffer.getvalue()
-
-            # Convert the bytes to a JavaScript Uint8Array
-            uint8_array = Uint8Array.new(list(zip_bytes))
-
-            # Create a Blob from the Uint8Array
-            zip_blob = Blob.new([uint8_array], {"type": "application/zip"})
-
-            zip_url = URL.createObjectURL(zip_blob)
-
-            # Triggering the download by creating a hidden link and clicking it
-            hidden_link = document.createElement("a")
-            hidden_link.setAttribute("download", "model_files.zip")
-            hidden_link.setAttribute("href", zip_url)
-            hidden_link.click()
+                hidden_link = document.createElement("a")
+                hidden_link.setAttribute("download", "generated_area.glb")
+                hidden_link.setAttribute("href", url)
+                hidden_link.click()
 
             # Convert buffer to bytes
 
