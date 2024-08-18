@@ -28,7 +28,7 @@ geo_json = json.loads(open_url(state_geo).read())
 from js import File, URL, Blob, Uint8Array
 
 
-m = folium.Map(location=[48, -102], zoom_start=3, tiles="CartoDB positron")
+# m = folium.Map(location=[48, -102], zoom_start=3, tiles="CartoDB positron")
 
 
 async def fetch_and_load_texture(x, y, zoom_level):
