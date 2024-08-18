@@ -1,5 +1,4 @@
 from pyscript import display, document
-import folium
 import io
 from ast import literal_eval
 import gc
@@ -376,23 +375,6 @@ async def submit_bounding_box(event):
 
     # print(results)
 
-    if False:
-        # results = await download_data(
-        #    np.array(np.meshgrid(x_range, y_range)).reshape(-1, 2)
-        # )
-
-        results = await async_get_data(0, 0)
-
-        print(results)
-
-        folium.Rectangle(
-            bounds=[[37.77, -122.42], [45.78, -100.41]],
-            color="blue",
-            fill=True,
-            fill_color="blue",
-            fill_opacity=0.2,
-        ).add_to(m)
-
     if True:  # generate mesh
         # vertices = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]])
         # faces = np.array([[0, 1, 2], [0, 2, 3]])
@@ -434,21 +416,6 @@ async def submit_bounding_box(event):
 
         # print(mesh)
 
-        if False:
-
-            file = File.new(
-                [mesh.export(file_type="obj")],
-                "generated_area.obj",
-                {type: "model/obj"},
-            )
-
-            url = URL.createObjectURL(file)
-
-            hidden_link = document.createElement("a")
-            hidden_link.setAttribute("download", "generated_area.obj")
-            hidden_link.setAttribute("href", url)
-            hidden_link.click()
-
         if True:
 
             # Generate a random RGB texture image
@@ -485,85 +452,25 @@ async def submit_bounding_box(event):
 
             print("Mesh constructed")
 
-            if False:
+            # glb_data = mesh.export(file_type="glb")
 
-                obj_data = mesh.export(file_type="obj")
-                # mtl_data = mesh.visual.material.export(file_type="mtl")
+            print("Generated binary data for download ")
+            file = File.new(
+                [Uint8Array.new(mesh.export(file_type="glb"))],
+                "generated_area.glb",
+                {type: "model/gltf-binary"},
+            )
+            del mesh
+            gc.collect()
 
-                print("Obj exported")
+            update_progress(100)
 
-                mtl_data = f"""newmtl material_0
-    Ka 0.00000000 0.00000000 0.00000000
-    Kd 0.00000000 0.00000000 0.00000000
-    Ks 0.00000000 0.00000000 0.00000000
-    Ns 0.00000000
-    map_Kd material_0.png
-                """
-                # mtl_data = mesh.visual.material.to_mtl()
+            url = URL.createObjectURL(file)
 
-                """    np.random.randint(
-                        100,
-                        255,
-                        (full_image.shape[0], full_image.shape[1], 3),
-                        dtype=np.uint8,
-                    )
-                )"""
-
-                # Save the texture image as PNG in memory
-                texture_buffer = io.BytesIO()
-                texture_pil.save(texture_buffer, format="PNG")
-                texture_buffer.seek(0)
-                texture_data = texture_buffer.getvalue()
-
-                # Create an in-memory ZIP file
-                zip_buffer = io.BytesIO()
-
-                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                    # Add OBJ and MTL files to the ZIP
-                    zip_file.writestr("model.obj", obj_data)
-                    zip_file.writestr("material_0.png", texture_data)
-                    zip_file.writestr("model.mtl", mtl_data)
-
-                print("Zipfile created")
-
-                # Prepare the ZIP file for download
-                zip_buffer.seek(0)
-
-                zip_bytes = zip_buffer.getvalue()
-
-                # Convert the bytes to a JavaScript Uint8Array
-                uint8_array = Uint8Array.new(list(zip_bytes))
-
-                # Create a Blob from the Uint8Array
-                zip_blob = Blob.new([uint8_array], {"type": "application/zip"})
-
-                zip_url = URL.createObjectURL(zip_blob)
-
-                # Triggering the download by creating a hidden link and clicking it
-                hidden_link = document.createElement("a")
-                hidden_link.setAttribute("download", "model_files.zip")
-                hidden_link.setAttribute("href", zip_url)
-                hidden_link.click()
-            if True:
-                # glb_data = mesh.export(file_type="glb")
-
-                print("Generated binary data for download ")
-                file = File.new(
-                    [Uint8Array.new(mesh.export(file_type="glb"))],
-                    "generated_area.glb",
-                    {type: "model/gltf-binary"},
-                )
-                del mesh
-                gc.collect()
-
-                update_progress(100)
-
-                url = URL.createObjectURL(file)
-
-                hidden_link = document.createElement("a")
-                hidden_link.setAttribute("download", "generated_area.glb")
-                hidden_link.setAttribute("href", url)
-                hidden_link.click()
+            hidden_link = document.createElement("a")
+            hidden_link.setAttribute("download", "generated_area.glb")
+            hidden_link.setAttribute("href", url)
+            hidden_link.click()
 
             # Convert buffer to bytes
 
