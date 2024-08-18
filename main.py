@@ -1,11 +1,10 @@
 from pyscript import display, document
 import folium
-import json
-import pandas as pd
 import io
 from ast import literal_eval
+import gc
 
-from pyodide.http import open_url, pyfetch
+from pyodide.http import pyfetch
 
 
 from PIL import Image
@@ -318,16 +317,11 @@ async def submit_bounding_box(event):
             # print(i, j, tile)
 
     results_elevation = await asyncio.gather(*tasks_elevation)
-    results_texture = await asyncio.gather(*tasks_texture)
 
     print("Data downloaded")
 
     full_elevation_image = np.zeros(
         (256 * x_range.shape[0], 256 * y_range.shape[0]), dtype=float
-    )
-
-    full_texture_image = np.zeros(
-        (256 * x_range.shape[0], 256 * y_range.shape[0], 3), dtype=np.uint8
     )
 
     # parse results
@@ -339,6 +333,15 @@ async def submit_bounding_box(event):
             (j - y_range[0]) * 256 : (j - y_range[0] + 1) * 256,
         ] = np.array(tile).T
 
+    del results_elevation
+    gc.collect()
+
+    results_texture = await asyncio.gather(*tasks_texture)
+
+    full_texture_image = np.zeros(
+        (256 * x_range.shape[0], 256 * y_range.shape[0], 3), dtype=np.uint8
+    )
+
     for result in results_texture:
         i, j, tile = result
 
@@ -348,6 +351,9 @@ async def submit_bounding_box(event):
         ] = np.array(tile).swapaxes(0, 1)[
             :, :, [2, 1, 0]
         ]  # .T
+
+    del results_texture
+    gc.collect()
 
     print("Data combined")
 
@@ -394,13 +400,16 @@ async def submit_bounding_box(event):
         )
         # full_elevation_image -= np.min(full_elevation_image)
         # full_elevation_image *= full_elevation_image.max() ** -1
-        full_elevation_image *= full_elevation_image.shape[0] * 0.001
+        full_elevation_image *= full_elevation_image.shape[0] * 0.0001
 
         # print(full_image.max(), full_image.min())
 
         mesh = heightmap_to_mesh(
             full_elevation_image
         )  # np.random.uniform(-100, 100, full_image.shape))
+
+        del full_elevation_image
+        gc.collect()
 
         print("Mesh computed")
 
@@ -429,6 +438,9 @@ async def submit_bounding_box(event):
             # Generate a random RGB texture image
             texture_pil = Image.fromarray(full_texture_image[::-1])
 
+            del full_texture_image
+            gc.collect()
+
             uv_coordinates = mesh.vertices[
                 :, [0, 2]
             ]  # Use x and y components of vertices for UV
@@ -441,14 +453,17 @@ async def submit_bounding_box(event):
                 image=texture_pil, glossiness=None
             )
 
+            del texture_pil
+            gc.collect()
+
             # material = trimesh.visual.texture.PBRMaterial(image=texture_pil)
 
             # mesh = mesh.simplify_quadric_decimation(face_count=1000)
 
             # print("simplified mesh")
 
-            color_visuals = trimesh.visual.TextureVisuals(uv=uv, material=material)
-            mesh.visual = color_visuals
+            # color_visuals = trimesh.visual.TextureVisuals(uv=uv, material=material)
+            mesh.visual = trimesh.visual.TextureVisuals(uv=uv, material=material)
 
             print("Mesh constructed")
 
@@ -512,13 +527,16 @@ async def submit_bounding_box(event):
                 hidden_link.setAttribute("href", zip_url)
                 hidden_link.click()
             if True:
-                glb_data = mesh.export(file_type="glb")
+                # glb_data = mesh.export(file_type="glb")
+
                 print("Generated binary data for download ")
                 file = File.new(
-                    [Uint8Array.new(glb_data)],
+                    [Uint8Array.new(mesh.export(file_type="glb"))],
                     "generated_area.glb",
                     {type: "model/gltf-binary"},
                 )
+                del mesh
+                gc.collect()
 
                 url = URL.createObjectURL(file)
 
@@ -545,3 +563,4 @@ bounding_box = folium.Rectangle(
 display(m, target="folium")
 
 # 40,-74.5, 40.3, -74.2
+# 37,-75.5,38,-74.9
