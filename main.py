@@ -3,6 +3,7 @@ import io
 from ast import literal_eval
 import gc
 
+
 from pyodide.http import pyfetch
 
 
@@ -12,17 +13,10 @@ import numpy as np
 import asyncio
 import trimesh
 
+import openeo
+
 import zipfile
 
-"""
-url = (
-    "https://raw.githubusercontent.com/python-visualization/folium/master/examples/data"
-)
-state_geo = f"{url}/us-states.json"
-state_unemployment = f"{url}/US_Unemployment_Oct2012.csv"
-state_data = pd.read_csv(open_url(state_unemployment))
-geo_json = json.loads(open_url(state_geo).read())
-"""
 
 from js import File, URL, Blob, Uint8Array
 
@@ -92,16 +86,9 @@ async def download_elevation_tile(url):
     see https://github.com/tilezen/joerd/blob/master/docs/formats.md#terrarium for conversion details
     """
 
-    # response = open_url(url).read().encode("latin1")
-    # response = pyfetch(url)
-    # tile = np.array(Image.open(BytesIO(response.content)), dtype=np.float64)
-
     tile = await fetch_and_load_image(url)
 
     tile = np.array(tile, dtype=np.float64)
-
-    # asyncio.gather(fetch_and_load_image(url) ) #up_down(), up_down(), up_down())
-    # tile = np.array(Image.open(response), dtype=np.float64)
 
     return (tile[:, :, 0] * 256.0 + tile[:, :, 1] + tile[:, :, 2] / 256.0) - 32768
 
@@ -141,7 +128,9 @@ def get_ranges(bbox_ll, zoom_level):
 
 
 # 2. Generate Vertices and Faces
-def heightmap_to_mesh(heightmap, dx=1.0, dy=1.0):
+def heightmap_to_mesh(
+    heightmap, dx=0.1, dy=0.1, x_global_offset=0, y_global_offset=0
+):  # , x_global_offset=0, y_global_offset=0):
     """
     Converts a heightmap to a 3D mesh.
 
@@ -155,8 +144,13 @@ def heightmap_to_mesh(heightmap, dx=1.0, dy=1.0):
     """
     n_rows, n_cols = heightmap.shape
     # Create grid of (x, y) coordinates
-    xs = np.linspace(0, dx * (n_cols - 1), n_cols)
-    ys = np.linspace(0, dy * (n_rows - 1), n_rows)
+    # print(dx * x_global_offset, dy * y_global_offset)
+    # xs = np.linspace(0, dx * (n_cols - 1), n_cols) + dx * (y_global_offset * 256 - 1)
+    # ys = np.linspace(0, dy * (n_rows - 1), n_rows) + dy * (x_global_offset * 256 - 1)
+
+    xs = np.linspace(0, dx * n_cols, n_cols + 1)[:-1] + dx * (y_global_offset * 256)
+    ys = np.linspace(0, dy * n_rows, n_rows + 1)[:-1] - dy * (x_global_offset * 256)
+
     xs, ys = np.meshgrid(xs, ys)
 
     # Flatten the arrays and create vertices
@@ -167,30 +161,6 @@ def heightmap_to_mesh(heightmap, dx=1.0, dy=1.0):
             ys.flatten(),
         )
     )
-
-    """
-    # Create faces
-    faces = []
-    for i in range(n_rows - 1):
-        for j in range(n_cols - 1):
-            # Indices of the four corners of the quad
-            idx_bl = i * n_cols + j
-            idx_br = idx_bl + 1
-            idx_tl = idx_bl + n_cols
-            idx_tr = idx_tl + 1
-
-            # First triangle of the quad
-            # faces.append([idx_bl, idx_br, idx_tr])
-            # Second triangle of the quad
-            # faces.append([idx_bl, idx_tr, idx_tl])
-
-            # First triangle of the quad
-            faces.append([idx_tr, idx_br, idx_bl])
-            # Second triangle of the quad
-            faces.append([idx_tl, idx_tr, idx_bl])
-
-    faces = np.array(faces)
-    """
 
     n_rows, n_cols = heightmap.shape
 
@@ -216,47 +186,9 @@ def heightmap_to_mesh(heightmap, dx=1.0, dy=1.0):
         [faces[: int(len(faces) / 2)], faces[int(len(faces) / 2) :]], axis=-1
     ).reshape(-1, 3)
 
-    # faces
-
-    # Create the mesh
-
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
 
-    # mesh.visual = trimesh.visual.TextureVisuals(
-    ##    uv=np.array([xs, ys]).reshape(2, -1).T,
-    #    image=np.random.randint(0, 255, (3, n_rows, n_cols)),
-    # )
-
-    # Create UV coordinates - they should be normalized to [0, 1] range
-    uv_x = np.linspace(0, 1, n_cols)
-    uv_y = np.linspace(0, 1, n_rows)
-    uv_xv, uv_yv = np.meshgrid(uv_x, uv_y)
-    uv_coords = np.column_stack((uv_xv.flatten(), uv_yv.flatten()))
-
-    # Generate a random RGB texture image
-    texture_image = Image.fromarray(
-        np.random.randint(230, 255, (n_rows, n_cols, 3), dtype=np.uint8)
-    )
-
-    def get_texture(my_uvs, img):
-        # img is PIL Image
-        uvs = my_uvs
-        material = trimesh.visual.texture.SimpleMaterial(image=img)
-        texture = trimesh.visual.TextureVisuals(uv=uvs, image=img, material=material)
-        return texture
-
-    # texture_visual = get_texture(uv_coords, texture_image)
-
-    # mesh.visual = trimesh.visual.TextureVisuals(
-    #    uv=uv_coords, image=Image.fromarray(texture_image)
-    # )
-
-    # Assign texture to the mesh using TextureVisuals
-    # mesh.visual = texture_visual  # trimesh.visual.TextureVisuals(uv=uv_coords, image=texture_image)
-
-    # mesh.visual = trimesh.visual.TextureVisuals(uv=uv_coords, image=texture)
-
-    return mesh  # , texture_visual
+    return mesh
 
 
 # Wrap the synchronous function in an async function
@@ -285,7 +217,7 @@ async def submit_bounding_box(event):
     # input_text = document.querySelector("#english")
 
     # english = input_text.value
-    input_text = document.querySelector("#bounding_box")
+    # input_text = document.querySelector("#bounding_box")
     # output_div = document.querySelector("#output")
 
     sw_input = document.querySelector(".sw")
@@ -297,17 +229,220 @@ async def submit_bounding_box(event):
 
     bounding_box = [ne0, ne1, sw0, sw1]
 
-    # map_element = document.querySelector("#folium")
-    # print(map_element)
+    x_range, y_range = get_ranges(bounding_box, 11)
 
-    # if False:
+    print(x_range, y_range)
 
-    # output_div.innerText = input_text.value
+    meshing_tasks = []
 
-    # bounding_box.bounds = [[37.77, -102.42], [45.78, -110.41]]
-    # print(map_element)  # .get_root().removeChild(map_element)
+    for x_chunk in np.array_split(x_range, int(len(x_range) / 2)):
+        for y_chunk in np.array_split(y_range, int(len(y_range) / 2)):
+            x_global_offset = x_chunk[0] - x_range[0]
+            y_global_offset = y_chunk[0] - y_range[0]
 
-    # bounding_box = [literal_eval(i) for i in input_text.value.split(",")]
+            x_chunk_ = np.arange(x_chunk[0], x_chunk[-1] + 2)
+            y_chunk_ = np.arange(y_chunk[0], y_chunk[-1] + 2)
+
+            meshing_tasks.append(
+                construct_mesh(
+                    x_chunk_,
+                    y_chunk_,
+                    x_global_offset=x_global_offset,
+                    y_global_offset=y_global_offset,
+                )
+            )
+
+    meshes = await asyncio.gather(*meshing_tasks)
+
+    if False:
+        # process the whole shabang
+
+        scene = trimesh.Scene(meshes)
+
+        del meshes
+        gc.collect()
+
+        file = File.new(
+            [Uint8Array.new(scene.export(file_type="glb"))],
+            "generated_area.glb",
+            {type: "model/gltf-binary"},
+        )
+        del scene
+        gc.collect()
+
+        url = URL.createObjectURL(file)
+
+        hidden_link = document.createElement("a")
+        hidden_link.setAttribute("download", "generated_area.glb")
+        hidden_link.setAttribute("href", url)
+        hidden_link.click()
+    if True:
+        # Create an in-memory ZIP file
+        zip_buffer = io.BytesIO()
+
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            # Add OBJ and MTL files to the ZIP
+            i = 0
+            while meshes:
+                mesh = meshes.pop(0)
+                # for i in range(len(meshes)):
+                # obj_data = mesh.export(file_type="obj")
+                zip_file.writestr("area_%i.glb" % i, mesh.export(file_type="glb"))
+                i += 1
+
+                del mesh
+                gc.collect()
+
+        print("Zipfile created")
+
+        # Prepare the ZIP file for download
+        zip_buffer.seek(0)
+
+        zip_bytes = zip_buffer.getvalue()
+
+        # Convert the bytes to a JavaScript Uint8Array
+        uint8_array = Uint8Array.new(list(zip_bytes))
+
+        # Create a Blob from the Uint8Array
+        zip_blob = Blob.new([uint8_array], {"type": "application/zip"})
+
+        zip_url = URL.createObjectURL(zip_blob)
+
+        # Triggering the download by creating a hidden link and clicking it
+        hidden_link = document.createElement("a")
+        hidden_link.setAttribute("download", "model_files.zip")
+        hidden_link.setAttribute("href", zip_url)
+        hidden_link.click()
+
+
+async def construct_mesh(x_range, y_range, x_global_offset, y_global_offset):
+    # input_text = document.querySelector("#english")
+
+    tasks_elevation = []
+    tasks_texture = []
+
+    # tile_tex = await download_texture_tile(0, 0, 0)
+    # print(tile_tex)
+
+    for i in x_range:
+        for j in y_range:
+            tasks_elevation.append(get_elevation_tile(i, j, 11))
+            tasks_texture.append(download_texture_tile(i, j, 11))
+
+            # print(i, j, tile)
+
+    results_elevation = await asyncio.gather(*tasks_elevation)
+
+    print("Data downloaded")
+    update_progress(10)
+
+    full_elevation_image = np.zeros(
+        (256 * x_range.shape[0], 256 * y_range.shape[0]), dtype=float
+    )
+
+    # parse results
+    for result in results_elevation:
+        i, j, tile = result
+
+        full_elevation_image[
+            (i - x_range[0]) * 256 : (i - x_range[0] + 1) * 256,
+            (j - y_range[0]) * 256 : (j - y_range[0] + 1) * 256,
+        ] = np.array(tile).T
+
+    # full_elevation_image = full_elevation_image[::-1]
+
+    full_elevation_image = full_elevation_image[
+        : full_elevation_image.shape[0] - 255,
+        : full_elevation_image.shape[1] - 255,
+    ]
+
+    del results_elevation
+    gc.collect()
+
+    update_progress(20)
+
+    results_texture = await asyncio.gather(*tasks_texture)
+
+    full_texture_image = np.zeros(
+        (256 * x_range.shape[0], 256 * y_range.shape[0], 3), dtype=np.uint8
+    )
+
+    for result in results_texture:
+        i, j, tile = result
+
+        full_texture_image[
+            (i - x_range[0]) * 256 : (i - x_range[0] + 1) * 256,
+            (j - y_range[0]) * 256 : (j - y_range[0] + 1) * 256,
+        ] = np.array(tile).swapaxes(0, 1)[
+            :, :, [2, 1, 0]
+        ]  # .T
+
+    # full_texture_image = full_texture_image[::-1]
+
+    full_texture_image = full_texture_image[
+        : full_texture_image.shape[0] - 255, : full_texture_image.shape[1] - 255
+    ]
+
+    # full_texture_image = full_texture_image[::-1]
+    full_elevation_image = full_elevation_image[::-1]
+
+    del results_texture
+    gc.collect()
+
+    # full_elevation_image -= np.min(full_elevation_image)
+    # full_elevation_image *= full_elevation_image.max() ** -1
+    full_elevation_image *= 0.005
+
+    mesh = heightmap_to_mesh(
+        full_elevation_image,
+        x_global_offset=x_global_offset,
+        y_global_offset=y_global_offset,
+    )  # np.random.uniform(-100, 100, full_image.shape))
+
+    del full_elevation_image
+    gc.collect()
+
+    print("Mesh computed")
+
+    # Generate a random RGB texture image
+    texture_pil = Image.fromarray(full_texture_image)  # [::-1])
+
+    del full_texture_image
+    gc.collect()
+
+    uv_coordinates = mesh.vertices[
+        :, [0, 2]
+    ]  # Use x and y components of vertices for UV
+
+    uv_min = uv_coordinates.min(axis=0)
+    uv_max = uv_coordinates.max(axis=0)
+    uv = (uv_coordinates - uv_min) / (uv_max - uv_min)
+    # im = Image.open("image.png")
+    material = trimesh.visual.texture.SimpleMaterial(image=texture_pil, glossiness=None)
+
+    del texture_pil
+    gc.collect()
+
+    mesh.visual = trimesh.visual.TextureVisuals(uv=uv, material=material)
+
+    return mesh
+
+
+async def submit_bounding_box_(event):
+    # input_text = document.querySelector("#english")
+
+    # english = input_text.value
+    input_text = document.querySelector("#bounding_box")
+    # output_div = document.querySelector("#output")
+
+    sw_input = document.querySelector(".sw")
+    ne_input = document.querySelector(".ne")
+
+    print(sw_input.value, ne_input.value)
+    sw0, sw1 = [literal_eval(i) for i in sw_input.value.split(",")]
+    ne0, ne1 = [literal_eval(i) for i in ne_input.value.split(",")]
+
+    bounding_box = [ne0, ne1, sw0, sw1]
 
     x_range, y_range = get_ranges(bounding_box, 11)
     print("x_range:", x_range)
@@ -368,135 +503,61 @@ async def submit_bounding_box(event):
     del results_texture
     gc.collect()
 
-    print("Data combined")
-    update_progress(40)
+    # full_elevation_image -= np.min(full_elevation_image)
+    # full_elevation_image *= full_elevation_image.max() ** -1
+    full_elevation_image *= full_elevation_image.shape[0] * 0.0002
 
-    # print(full_image)
+    mesh = heightmap_to_mesh(
+        full_elevation_image
+    )  # np.random.uniform(-100, 100, full_image.shape))
 
-    # print(results)
+    del full_elevation_image
+    gc.collect()
 
-    if True:  # generate mesh
-        # vertices = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]])
-        # faces = np.array([[0, 1, 2], [0, 2, 3]])
-        # uv_coords = np.array([[0, 0], [1, 0], [1, 1], [0, 1]])  # Texture coordinates
+    print("Mesh computed")
 
-        # Load the texture image (your image array should be in RGB format)
-        # texture_image = Image.open('your_image.png')
+    # Generate a random RGB texture image
+    texture_pil = Image.fromarray(full_texture_image[::-1])
 
-        # texture_image = Image.fromarray(np.uint8(full_image))
+    del full_texture_image
+    gc.collect()
 
-        # Convert the PIL image to a numpy array
-        # texture = np.array(texture_image)
+    uv_coordinates = mesh.vertices[
+        :, [0, 2]
+    ]  # Use x and y components of vertices for UV
 
-        # Create a Trimesh object
-        # mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-        print(
-            "elevation range:",
-            np.max(full_elevation_image),
-            np.min(full_elevation_image),
-        )
-        # full_elevation_image -= np.min(full_elevation_image)
-        # full_elevation_image *= full_elevation_image.max() ** -1
-        full_elevation_image *= full_elevation_image.shape[0] * 0.0001
+    uv_min = uv_coordinates.min(axis=0)
+    uv_max = uv_coordinates.max(axis=0)
+    uv = (uv_coordinates - uv_min) / (uv_max - uv_min)
+    # im = Image.open("image.png")
+    material = trimesh.visual.texture.SimpleMaterial(image=texture_pil, glossiness=None)
 
-        # print(full_image.max(), full_image.min())
+    del texture_pil
+    gc.collect()
 
-        mesh = heightmap_to_mesh(
-            full_elevation_image
-        )  # np.random.uniform(-100, 100, full_image.shape))
-        update_progress(60)
+    mesh.visual = trimesh.visual.TextureVisuals(uv=uv, material=material)
 
-        del full_elevation_image
-        gc.collect()
+    print("Mesh constructed")
 
-        print("Mesh computed")
+    # glb_data = mesh.export(file_type="glb")
 
-        # Apply texture using visual.TextureVisuals
-        # mesh.visual = trimesh.visual.TextureVisuals(uv=uv_coords, image=full_image)
+    print("Generated binary data for download ")
+    file = File.new(
+        [Uint8Array.new(mesh.export(file_type="glb"))],
+        "generated_area.glb",
+        {type: "model/gltf-binary"},
+    )
+    del mesh
+    gc.collect()
 
-        # print(mesh)
+    url = URL.createObjectURL(file)
 
-        if True:
-
-            # Generate a random RGB texture image
-            texture_pil = Image.fromarray(full_texture_image[::-1])
-
-            del full_texture_image
-            gc.collect()
-
-            uv_coordinates = mesh.vertices[
-                :, [0, 2]
-            ]  # Use x and y components of vertices for UV
-
-            uv_min = uv_coordinates.min(axis=0)
-            uv_max = uv_coordinates.max(axis=0)
-            uv = (uv_coordinates - uv_min) / (uv_max - uv_min)
-            # im = Image.open("image.png")
-            material = trimesh.visual.texture.SimpleMaterial(
-                image=texture_pil, glossiness=None
-            )
-
-            del texture_pil
-            gc.collect()
-
-            update_progress(80)
-
-            # material = trimesh.visual.texture.PBRMaterial(image=texture_pil)
-
-            # mesh = mesh.simplify_quadric_decimation(face_count=1000)
-
-            # print("simplified mesh")
-
-            # color_visuals = trimesh.visual.TextureVisuals(uv=uv, material=material)
-            mesh.visual = trimesh.visual.TextureVisuals(uv=uv, material=material)
-
-            print("Mesh constructed")
-
-            # glb_data = mesh.export(file_type="glb")
-
-            print("Generated binary data for download ")
-            file = File.new(
-                [Uint8Array.new(mesh.export(file_type="glb"))],
-                "generated_area.glb",
-                {type: "model/gltf-binary"},
-            )
-            del mesh
-            gc.collect()
-
-            update_progress(100)
-
-            url = URL.createObjectURL(file)
-
-            hidden_link = document.createElement("a")
-            hidden_link.setAttribute("download", "generated_area.glb")
-            hidden_link.setAttribute("href", url)
-            hidden_link.click()
-
-            # Convert buffer to bytes
+    hidden_link = document.createElement("a")
+    hidden_link.setAttribute("download", "generated_area.glb")
+    hidden_link.setAttribute("href", url)
+    hidden_link.click()
 
 
 def update_progress(value):
     progress_bar = document.getElementById("progress-bar")
     progress_bar.value = value
-
-
-"""
-
-# Add the rectangle to the map
-bounding_box = folium.Rectangle(
-    bounds=[[37.77, -122.42], [45.78, -100.41]],
-    color="blue",
-    fill=True,
-    fill_color="cyan",
-).add_to(m)
-
-"""
-
-# ls = folium.PolyLine(
-#    locations=[[43, 7], [43, 13], [47, 13], [47, 7], [43, 7]], color="red"
-# )
-# ls.add_to(m)
-# display(m, target="folium")
-
-# 40,-74.5, 40.3, -74.2
-# 37,-75.5,38,-74.9
