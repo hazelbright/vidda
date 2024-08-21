@@ -5,6 +5,7 @@ import gc
 
 
 from pyodide.http import pyfetch
+from pyodide.ffi import to_js
 
 
 from PIL import Image
@@ -18,7 +19,7 @@ import openeo
 import zipfile
 
 
-from js import File, URL, Blob, Uint8Array
+from js import File, URL, Blob, Uint8Array, ReadableStream
 
 
 # m = folium.Map(location=[48, -102], zoom_start=3, tiles="CartoDB positron")
@@ -40,6 +41,7 @@ async def fetch_and_load_texture(x, y, zoom_level):
     url_tex = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}".format(
         z=zoom_level, y=y, x=x
     )
+
     # url_tex = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
     # url_tex = "http://cawm.lib.uiowa.edu/tiles/{z}/{x}/{y}.png"
     # url_tex = "http://server.arcgisonline.com/ArcGIS/rest/services/NatGeo_World_Map/MapServer/tile//{z}/{y}/{x}"
@@ -88,9 +90,18 @@ async def download_elevation_tile(url):
 
     tile = await fetch_and_load_image(url)
 
-    tile = np.array(tile, dtype=np.float64)
+    tile = np.array(tile, dtype=np.uint8)  # np.float64)
 
-    return (tile[:, :, 0] * 256.0 + tile[:, :, 1] + tile[:, :, 2] / 256.0) - 32768
+    red = tile[:, :, 0].astype(np.float64)
+    green = tile[:, :, 1].astype(np.float64)
+    blue = tile[:, :, 2].astype(np.float64)
+
+    # Combine the channels into elevation values
+    # elevation = (red * 256.0 + green + blue / 256.0) - 32768.0
+
+    # return (tile[:, :, 0] * 256.0 + tile[:, :, 1] + tile[:, :, 2] / 256.0) - 32768
+    return (red * 256.0 + green + blue / 256.0) - 32768.0
+    # return eleva
 
 
 async def get_elevation_tile(x, y, zoom_level):
@@ -223,7 +234,7 @@ async def submit_bounding_box(event):
     sw_input = document.querySelector(".sw")
     ne_input = document.querySelector(".ne")
 
-    print(sw_input.value, ne_input.value)
+    # print(sw_input.value, ne_input.value)
     sw0, sw1 = [literal_eval(i) for i in sw_input.value.split(",")]
     ne0, ne1 = [literal_eval(i) for i in ne_input.value.split(",")]
 
@@ -235,8 +246,8 @@ async def submit_bounding_box(event):
 
     meshing_tasks = []
 
-    for x_chunk in np.array_split(x_range, int(len(x_range) / 2)):
-        for y_chunk in np.array_split(y_range, int(len(y_range) / 2)):
+    for x_chunk in np.array_split(x_range, int(len(x_range))):
+        for y_chunk in np.array_split(y_range, int(len(y_range))):
             x_global_offset = x_chunk[0] - x_range[0]
             y_global_offset = y_chunk[0] - y_range[0]
 
@@ -276,7 +287,7 @@ async def submit_bounding_box(event):
         hidden_link.setAttribute("download", "generated_area.glb")
         hidden_link.setAttribute("href", url)
         hidden_link.click()
-    if True:
+    if False:
         # Create an in-memory ZIP file
         zip_buffer = io.BytesIO()
 
@@ -313,6 +324,61 @@ async def submit_bounding_box(event):
         hidden_link.setAttribute("download", "model_files.zip")
         hidden_link.setAttribute("href", zip_url)
         hidden_link.click()
+    if True:
+
+        def create_zip_in_memory(meshes):
+            # Create an in-memory bytes buffer
+            zip_buffer = io.BytesIO()
+
+            # Create a zip file in the buffer
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                i = 0
+                while meshes:
+                    mesh = meshes.pop(0)
+                    # Add each mesh as a GLB file in the zip
+                    zip_file.writestr(f"area_{i}.glb", mesh.export(file_type="glb"))
+                    i += 1
+
+                    del mesh
+                    gc.collect()
+
+            # Ensure everything is written to the buffer
+            zip_file.close()
+
+            # Move to the beginning of the buffer to prepare for reading
+            zip_buffer.seek(0)
+            return zip_buffer
+
+        def stream_zip_content(zip_buffer, chunk_size=1024 * 64):
+            while True:
+                chunk = zip_buffer.read(chunk_size)
+                if not chunk:
+                    break
+                yield to_js(Uint8Array.new(list(chunk)))
+
+        def download_zip(meshes):
+            # Create the zip in memory
+            zip_buffer = create_zip_in_memory(meshes)
+
+            # Create a generator to stream the zip content
+            zip_stream = stream_zip_content(zip_buffer)
+
+            # Create a Blob from the generator
+            zip_blob = Blob.new(zip_stream, {"type": "application/zip"})
+
+            # Create a download URL for the blob
+            zip_url = URL.createObjectURL(zip_blob)
+
+            # Trigger the download by creating a hidden link and clicking it
+            hidden_link = document.createElement("a")
+            hidden_link.setAttribute(
+                "download", "%.5f_%.5f_%.5f_%.5f.zip" % tuple(bounding_box)
+            )
+            hidden_link.setAttribute("href", zip_url)
+            hidden_link.click()
+
+        # Assuming 'meshes' is the list of mesh objects
+        download_zip(meshes)
 
 
 async def construct_mesh(x_range, y_range, x_global_offset, y_global_offset):
@@ -334,6 +400,7 @@ async def construct_mesh(x_range, y_range, x_global_offset, y_global_offset):
     results_elevation = await asyncio.gather(*tasks_elevation)
 
     print("Data downloaded")
+
     update_progress(10)
 
     full_elevation_image = np.zeros(
