@@ -224,7 +224,7 @@ async def download_data(indices):
     return results
 
 
-async def submit_bounding_box(event):
+async def get_textured_mesh(event):
     # input_text = document.querySelector("#english")
 
     # english = input_text.value
@@ -381,6 +381,66 @@ async def submit_bounding_box(event):
         download_zip(meshes)
 
 
+async def construct_compound_tile(x_range, y_range, x_global_offset, y_global_offset):
+    # input_text = document.querySelector("#english")
+
+    tasks_elevation = []
+    tasks_texture = []
+
+    # tile_tex = await download_texture_tile(0, 0, 0)
+    # print(tile_tex)
+
+    for i in x_range:
+        for j in y_range:
+            tasks_elevation.append(get_elevation_tile(i, j, 11))
+            tasks_texture.append(download_texture_tile(i, j, 11))
+
+            # print(i, j, tile)
+
+    results_elevation = await asyncio.gather(*tasks_elevation)
+
+    results_texture = await asyncio.gather(*tasks_texture)
+
+    print("Data downloaded")
+
+    update_progress(10)
+
+    full_image_tile = np.zeros(
+        (256 * x_range.shape[0], 256 * y_range.shape[0], 4), dtype=float
+    )
+
+    # parse results
+    for result in results_elevation:
+        i, j, tile = result
+
+        full_image_tile[
+            (i - x_range[0]) * 256 : (i - x_range[0] + 1) * 256,
+            (j - y_range[0]) * 256 : (j - y_range[0] + 1) * 256,
+            -1,
+        ] = np.array(tile).T
+
+    del results_elevation
+    gc.collect()
+
+    for result in results_texture:
+        i, j, tile = result
+
+        full_image_tile[
+            (i - x_range[0]) * 256 : (i - x_range[0] + 1) * 256,
+            (j - y_range[0]) * 256 : (j - y_range[0] + 1) * 256,
+            :3,
+        ] = np.array(tile).swapaxes(0, 1)[
+            :, :, [2, 1, 0]
+        ]  # .T
+
+    del results_texture
+    gc.collect()
+
+    full_image_tile[:, :, -1] = full_image_tile[::-1, :, -1]
+
+    return x_global_offset, y_global_offset, full_image_tile
+
+
 async def construct_mesh(x_range, y_range, x_global_offset, y_global_offset):
     # input_text = document.querySelector("#english")
 
@@ -495,134 +555,109 @@ async def construct_mesh(x_range, y_range, x_global_offset, y_global_offset):
     return mesh
 
 
-async def submit_bounding_box_(event):
+async def get_texture(event):
     # input_text = document.querySelector("#english")
 
     # english = input_text.value
-    input_text = document.querySelector("#bounding_box")
+    # input_text = document.querySelector("#bounding_box")
     # output_div = document.querySelector("#output")
 
     sw_input = document.querySelector(".sw")
     ne_input = document.querySelector(".ne")
 
-    print(sw_input.value, ne_input.value)
+    # print(sw_input.value, ne_input.value)
     sw0, sw1 = [literal_eval(i) for i in sw_input.value.split(",")]
     ne0, ne1 = [literal_eval(i) for i in ne_input.value.split(",")]
 
     bounding_box = [ne0, ne1, sw0, sw1]
 
     x_range, y_range = get_ranges(bounding_box, 11)
-    print("x_range:", x_range)
-    print("y_range:", y_range)
 
-    tasks_elevation = []
-    tasks_texture = []
+    print(x_range, y_range)
 
-    # tile_tex = await download_texture_tile(0, 0, 0)
-    # print(tile_tex)
+    image_tasks = []
 
-    for i in x_range:
-        for j in y_range:
-            tasks_elevation.append(get_elevation_tile(i, j, 11))
-            tasks_texture.append(download_texture_tile(i, j, 11))
+    for x_chunk in np.array_split(x_range, int(len(x_range))):
+        for y_chunk in np.array_split(y_range, int(len(y_range))):
+            x_global_offset = x_chunk[0] - x_range[0]
+            y_global_offset = y_chunk[0] - y_range[0]
 
-            # print(i, j, tile)
+            # x_chunk_ = np.arange(x_chunk[0], x_chunk[-1] + 2)
+            # y_chunk_ = np.arange(y_chunk[0], y_chunk[-1] + 2)
 
-    results_elevation = await asyncio.gather(*tasks_elevation)
+            image_tasks.append(
+                construct_compound_tile(
+                    x_chunk,
+                    y_chunk,
+                    x_global_offset=x_global_offset,
+                    y_global_offset=y_global_offset,
+                )
+            )
 
-    print("Data downloaded")
-    update_progress(10)
+    image_data = await asyncio.gather(*image_tasks)
 
-    full_elevation_image = np.zeros(
-        (256 * x_range.shape[0], 256 * y_range.shape[0]), dtype=float
-    )
+    if True:
 
-    # parse results
-    for result in results_elevation:
-        i, j, tile = result
+        def create_zip_in_memory(meshes):
+            # Create an in-memory bytes buffer
+            zip_buffer = io.BytesIO()
 
-        full_elevation_image[
-            (i - x_range[0]) * 256 : (i - x_range[0] + 1) * 256,
-            (j - y_range[0]) * 256 : (j - y_range[0] + 1) * 256,
-        ] = np.array(tile).T
+            # Create a zip file in the buffer
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                # i = 0
+                while meshes:
+                    i, j, mesh = meshes.pop(0)
+                    # Add each mesh as a GLB file in the zip
+                    texture_buffer = io.BytesIO()
+                    Image.fromarray(mesh[:, :, :3].astype(np.uint8)).save(
+                        texture_buffer, format="PNG"
+                    )
+                    texture_buffer.seek(0)
+                    texture_data = texture_buffer.getvalue()
 
-    del results_elevation
-    gc.collect()
+                    zip_file.writestr(f"area_{i}_{j}.png", texture_data)
+                    # i += 1
 
-    update_progress(20)
+                    del mesh
+                    gc.collect()
 
-    results_texture = await asyncio.gather(*tasks_texture)
+            # Ensure everything is written to the buffer
+            zip_file.close()
 
-    full_texture_image = np.zeros(
-        (256 * x_range.shape[0], 256 * y_range.shape[0], 3), dtype=np.uint8
-    )
+            # Move to the beginning of the buffer to prepare for reading
+            zip_buffer.seek(0)
+            return zip_buffer
 
-    for result in results_texture:
-        i, j, tile = result
+        def stream_zip_content(zip_buffer, chunk_size=1024 * 64):
+            while True:
+                chunk = zip_buffer.read(chunk_size)
+                if not chunk:
+                    break
+                yield to_js(Uint8Array.new(list(chunk)))
 
-        full_texture_image[
-            (i - x_range[0]) * 256 : (i - x_range[0] + 1) * 256,
-            (j - y_range[0]) * 256 : (j - y_range[0] + 1) * 256,
-        ] = np.array(tile).swapaxes(0, 1)[
-            :, :, [2, 1, 0]
-        ]  # .T
+        def download_zip(meshes):
+            # Create the zip in memory
+            zip_buffer = create_zip_in_memory(meshes)
 
-    del results_texture
-    gc.collect()
+            # Create a generator to stream the zip content
+            zip_stream = stream_zip_content(zip_buffer)
 
-    # full_elevation_image -= np.min(full_elevation_image)
-    # full_elevation_image *= full_elevation_image.max() ** -1
-    full_elevation_image *= full_elevation_image.shape[0] * 0.0002
+            # Create a Blob from the generator
+            zip_blob = Blob.new(zip_stream, {"type": "application/zip"})
 
-    mesh = heightmap_to_mesh(
-        full_elevation_image
-    )  # np.random.uniform(-100, 100, full_image.shape))
+            # Create a download URL for the blob
+            zip_url = URL.createObjectURL(zip_blob)
 
-    del full_elevation_image
-    gc.collect()
+            # Trigger the download by creating a hidden link and clicking it
+            hidden_link = document.createElement("a")
+            hidden_link.setAttribute(
+                "download", "%.5f_%.5f_%.5f_%.5f.zip" % tuple(bounding_box)
+            )
+            hidden_link.setAttribute("href", zip_url)
+            hidden_link.click()
 
-    print("Mesh computed")
-
-    # Generate a random RGB texture image
-    texture_pil = Image.fromarray(full_texture_image[::-1])
-
-    del full_texture_image
-    gc.collect()
-
-    uv_coordinates = mesh.vertices[
-        :, [0, 2]
-    ]  # Use x and y components of vertices for UV
-
-    uv_min = uv_coordinates.min(axis=0)
-    uv_max = uv_coordinates.max(axis=0)
-    uv = (uv_coordinates - uv_min) / (uv_max - uv_min)
-    # im = Image.open("image.png")
-    material = trimesh.visual.texture.SimpleMaterial(image=texture_pil, glossiness=None)
-
-    del texture_pil
-    gc.collect()
-
-    mesh.visual = trimesh.visual.TextureVisuals(uv=uv, material=material)
-
-    print("Mesh constructed")
-
-    # glb_data = mesh.export(file_type="glb")
-
-    print("Generated binary data for download ")
-    file = File.new(
-        [Uint8Array.new(mesh.export(file_type="glb"))],
-        "generated_area.glb",
-        {type: "model/gltf-binary"},
-    )
-    del mesh
-    gc.collect()
-
-    url = URL.createObjectURL(file)
-
-    hidden_link = document.createElement("a")
-    hidden_link.setAttribute("download", "generated_area.glb")
-    hidden_link.setAttribute("href", url)
-    hidden_link.click()
+        # Assuming 'meshes' is the list of mesh objects
+        download_zip(image_data)
 
 
 def update_progress(value):
